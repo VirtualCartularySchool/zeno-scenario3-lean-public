@@ -1,0 +1,61 @@
+name: Independent Lean verification
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  independent-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout exact submitted source
+        uses: actions/checkout@v4
+
+      - name: Verify submission files and SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f lean-toolchain
+          test -f lake-manifest.json
+          test -f ZenoSmale/Main.lean
+          test -f Audit.lean
+          test -f SHA256SUMS.txt
+          sha256sum -c SHA256SUMS.txt
+
+      - name: Independent Lean build (no GitHub build-cache reuse)
+        uses: leanprover/lean-action@v1
+        with:
+          auto-config: false
+          build: true
+          use-github-cache: false
+          use-mathlib-cache: true
+
+      - name: Verify stated axiom dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          lake env lean Audit.lean > AXIOMS_INDEPENDENT.txt
+          diff -u AXIOMS.txt AXIOMS_INDEPENDENT.txt
+
+      - name: Reject unproved placeholders in submitted proof files
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -RnE '(^|[^[:alnum:]_])(sorry|admit|axiom|native_decide|implemented_by)([^[:alnum:]_]|$)|@[[]extern[]]|(^|[[:space:]])(unsafe|opaque)[[:space:]]' Zeno ZenoSmale; then
+            echo "Potential proof hole or unsafe declaration detected"
+            exit 1
+          fi
+
+      - name: Record toolchain and result
+        shell: bash
+        run: |
+          set -euo pipefail
+          lake env lean --version
+          echo "Independent build and audit commands completed."
